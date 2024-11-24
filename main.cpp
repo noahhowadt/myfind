@@ -7,6 +7,8 @@
 #include <vector>
 #include <string>
 #include <sys/wait.h>
+#include <sys/file.h>
+#include <fcntl.h>
 
 using namespace std;
 
@@ -36,7 +38,16 @@ vector<string> get_folders(const string &path)
   return folders;
 }
 
-void searchFolder(const string &path, const string &filename, const bool &recursive, const bool caseSensitive)
+void write_synchronized(const std::string &message)
+{
+  int fd = fileno(stdout);
+  flock(fd, LOCK_EX);
+  std::cout << message << std::endl;
+  std::cout.flush();
+  flock(fd, LOCK_UN);
+}
+
+void searchFolder(const string &path, const string &filename, const bool &recursive, const bool caseInsensitive)
 {
   DIR *dir = opendir(path.c_str());
 
@@ -54,11 +65,14 @@ void searchFolder(const string &path, const string &filename, const bool &recurs
         strcmp(entry->d_name, "..") != 0)
     {
       string newpath = path + "/" + entry->d_name;
-      searchFolder(newpath, filename, true, caseSensitive);
+      searchFolder(newpath, filename, true, caseInsensitive);
     }
-    else if (entry->d_type == DT_REG && (caseSensitive && strcmp(entry->d_name, filename.c_str()) == 0) || (!caseSensitive && strcasecmp(entry->d_name, filename.c_str()) == 0))
+    else if (entry->d_type == DT_REG && (!caseInsensitive && strcmp(entry->d_name, filename.c_str()) == 0) || (caseInsensitive && strcasecmp(entry->d_name, filename.c_str()) == 0))
     {
-      cout << "Found " << filename << " at " << path << "/" << filename << endl;
+      std::string full_path = std::string(path) + "/" + entry->d_name;
+      char resolved_path[PATH_MAX];
+      write_synchronized(
+          to_string(getpid()) + ": " + entry->d_name + ": " + realpath(full_path.c_str(), resolved_path));
     }
   }
 
@@ -69,16 +83,47 @@ int main(int argc, char *argv[])
 {
   if (argc < 3)
   {
-    cerr << "Usage: " << argv[0] << " searchpath filename1 [filename2] ... [filenameN]\n";
+    cerr << "Usage: " << argv[0] << " searchpath filename1 [filename2] ... [filenameN] [-i] [-R]\n";
     return 1;
   }
 
-  string searchpath = argv[1];
+  string searchpath;
   vector<string *> filenames;
+  bool caseInsensitive = false;
+  bool recursive = false;
 
-  for (int i = 2; i < argc; i++)
+  // Parse arguments
+  for (int i = 1; i < argc; i++)
   {
-    filenames.push_back(new string(argv[i]));
+    string arg = argv[i];
+    if (arg == "-i")
+    {
+      caseInsensitive = true;
+    }
+    else if (arg == "-R")
+    {
+      recursive = true;
+    }
+    else if (searchpath.empty())
+    {
+      searchpath = arg; // First non-flag argument is searchpath
+    }
+    else
+    {
+      filenames.push_back(new string(arg)); // Remaining non-flag arguments are filenames
+    }
+  }
+
+  if (searchpath.empty())
+  {
+    cerr << "Error: Search path not provided.\n";
+    return 1;
+  }
+
+  if (filenames.empty())
+  {
+    cerr << "Error: At least one filename must be provided.\n";
+    return 1;
   }
 
   cout << "searchpath: " << searchpath << endl;
@@ -102,7 +147,7 @@ int main(int argc, char *argv[])
     else if (pid == 0)
     {
       // Child process
-      searchFolder(searchpath, *filenames[i], true, true);
+      searchFolder(searchpath, *filenames[i], recursive, caseInsensitive);
       exit(0);
     }
     else
