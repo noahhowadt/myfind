@@ -89,15 +89,6 @@ int main(int argc, char *argv[])
   }
   cout << endl;
 
-  /*
-  cout << "Folders in searchpath: " << endl;
-   vector<string> folders = get_folders(searchpath);
-   for (auto folder : folders)
-   {
-     cout << folder << endl;
-   }
-  */
-
   vector<pid_t> pids;
   for (int i = 0; i < (int)filenames.size(); i++)
   {
